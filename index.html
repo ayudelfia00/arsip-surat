@@ -654,6 +654,7 @@
       jenisChips,
       statusChips,
       el("div",{class:"toolbar-spacer"}),
+      el("button",{class:"btn", onclick: loadLetters, title:"Muat ulang daftar dari Drive"}, [icon("refresh"), " Refresh"]),
       el("button",{class:"btn btn-primary", onclick: openAddForm}, [icon("plus"), " Tambah surat"])
     ]);
   }
