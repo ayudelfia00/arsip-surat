@@ -183,6 +183,7 @@
   }
   .badge.masuk{background:var(--teal-bg);color:var(--teal);}
   .badge.keluar{background:var(--plum-bg);color:var(--plum);}
+  .badge.incomplete{background:var(--gold-bg);color:var(--gold);border:1px dashed var(--gold);}
   .stamp-badge{
     display:inline-flex;align-items:center;gap:5px;
     font-size:11px;font-weight:600;padding:4px 10px;border-radius:999px;
@@ -565,10 +566,14 @@
   function filteredLetters(){
     return state.letters.filter(function(l){
       if(state.jenisFilter !== "semua" && l.jenis !== state.jenisFilter) return false;
-      if(state.statusFilter !== "semua" && l.status !== state.statusFilter) return false;
+      if(state.statusFilter === "__incomplete"){
+        if(l.no_surat && l.perihal) return false;
+      } else if(state.statusFilter !== "semua" && l.status !== state.statusFilter){
+        return false;
+      }
       if(state.search){
         var s = state.search.toLowerCase();
-        var hay = (l.no_surat+" "+l.perihal+" "+l.pihak).toLowerCase();
+        var hay = (l.no_surat+" "+l.perihal+" "+l.pihak+" "+l.name).toLowerCase();
         if(hay.indexOf(s) === -1) return false;
       }
       return true;
@@ -640,7 +645,9 @@
       chip("Semua status", state.statusFilter==="semua", function(){ state.statusFilter="semua"; render(); })
     ].concat(STATUS_OPTIONS.map(function(o){
       return chip(o.label, state.statusFilter===o.v, function(){ state.statusFilter=o.v; render(); });
-    })));
+    })).concat([
+      chip("Perlu dilengkapi", state.statusFilter==="__incomplete", function(){ state.statusFilter = state.statusFilter==="__incomplete" ? "semua" : "__incomplete"; render(); })
+    ]));
 
     return el("div",{class:"toolbar"}, [
       el("div",{class:"search-wrap"}, [icon("search"), searchInput]),
@@ -680,6 +687,7 @@
       el("th",{style:"text-align:right"}, ["Aksi"])
     ])]);
     var tbody = el("tbody",{}, rows.map(function(l){
+      var isIncomplete = !l.no_surat || !l.perihal;
       var statusSelect = el("select",{style:"font-size:11.5px;padding:4px 6px;width:auto;border-radius:999px;"}, STATUS_OPTIONS.map(function(o){
         var opt = el("option",{value:o.v}, [o.label]);
         if(o.v === l.status) opt.selected = true;
@@ -691,8 +699,8 @@
         el("td",{}, [el("span",{class:"no-surat"}, [l.no_surat || "\u2013"])]),
         el("td",{}, [fmtDate(l.tanggal)]),
         el("td",{}, [
-          el("div",{class:"perihal-cell"}, [l.perihal || "\u2013"]),
-          el("div",{class:"sub-cell"}, [l.pihak || ""])
+          el("div",{class:"perihal-cell"}, [l.perihal || (isIncomplete ? el("span",{class:"badge incomplete"}, [icon("scan"), "Perlu dilengkapi"]) : "\u2013")]),
+          el("div",{class:"sub-cell"}, [l.pihak || l.name || ""])
         ]),
         el("td",{}, [el("span",{class:"badge "+(l.jenis==="keluar"?"keluar":"masuk")}, [l.jenis==="keluar" ? "Keluar" : "Masuk"])]),
         el("td",{}, [statusSelect]),
