@@ -293,12 +293,14 @@
   var state = {
     clientId: "",
     connected: false,
+    connectedEmail: "",
     connecting: false,
     accessToken: null,
     folderId: null,
     letters: [],
     loadingLetters: false,
     search: "",
+    dateFilter: "",
     jenisFilter: "semua",
     statusFilter: "semua",
     showForm: false,
@@ -438,7 +440,7 @@
     try{
       var tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: clientId,
-        scope: "https://www.googleapis.com/auth/drive",
+        scope: "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email",
         callback: function(resp){
           state.connecting = false;
           if(resp.error){
@@ -453,6 +455,10 @@
             window.storage.set("arsip:clientId", clientId, false).catch(function(){});
           }
           render();
+          fetch("https://www.googleapis.com/oauth2/v3/userinfo", {headers: apiHeaders()})
+            .then(function(r){ return r.json(); })
+            .then(function(info){ state.connectedEmail = info.email || ""; render(); })
+            .catch(function(){});
           ensureFolder().then(function(id){
             state.folderId = id;
             if(window.storage){ window.storage.set("arsip:folderId", id, false).catch(function(){}); }
@@ -473,6 +479,7 @@
   function disconnect(){
     state.connected = false;
     state.accessToken = null;
+    state.connectedEmail = "";
     state.letters = [];
     render();
   }
@@ -651,6 +658,7 @@
   function filteredLetters(){
     return state.letters.filter(function(l){
       if(state.jenisFilter !== "semua" && l.jenis !== state.jenisFilter) return false;
+      if(state.dateFilter && l.tanggal !== state.dateFilter) return false;
       if(state.statusFilter === "__incomplete"){
         if(l.no_surat && l.perihal) return false;
       } else if(state.statusFilter !== "semua" && l.status !== state.statusFilter){
@@ -729,7 +737,7 @@
   function renderMasthead(){
     var status = el("div",{class:"conn-status"}, [
       el("span",{class:"conn-dot" + (state.connected ? " on" : "")}),
-      el("span",{}, [state.connected ? "Tersambung ke Google Drive" : "Belum tersambung"]),
+      el("span",{}, [state.connected ? ("Tersambung" + (state.connectedEmail ? " sebagai " + state.connectedEmail : " ke Google Drive")) : "Belum tersambung"]),
       state.connected ? el("button",{onclick:disconnect}, ["Putuskan"]) : null
     ]);
     return el("div",{class:"masthead"}, [
@@ -772,6 +780,13 @@
     var searchInput = el("input",{type:"text", placeholder:"Cari nomor surat, perihal, atau pihak\u2026", value: state.search});
     searchInput.addEventListener("input", function(e){ state.search = e.target.value; render(); });
 
+    var dateInput = el("input",{type:"date", style:"width:auto;", value: state.dateFilter});
+    dateInput.addEventListener("change", function(e){ state.dateFilter = e.target.value; render(); });
+    var dateWrap = el("div",{style:"display:flex;align-items:center;gap:4px;"}, [
+      dateInput,
+      state.dateFilter ? el("button",{class:"icon-btn", title:"Hapus filter tanggal", onclick:function(){ state.dateFilter=""; render(); }}, ["\u00d7"]) : null
+    ]);
+
     function chip(label, active, onclick){
       return el("button",{class:"chip"+(active?" active":""), onclick:onclick}, [label]);
     }
@@ -791,6 +806,7 @@
 
     return el("div",{class:"toolbar"}, [
       el("div",{class:"search-wrap"}, [icon("search"), searchInput]),
+      dateWrap,
       jenisChips,
       statusChips,
       el("div",{class:"toolbar-spacer"}),
