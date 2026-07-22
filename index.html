@@ -640,7 +640,7 @@
         "Jenis": l.jenis === "keluar" ? "Keluar" : "Masuk",
         "Perihal": l.perihal,
         "Pengirim/Penerima": l.pihak,
-        "Status Disposisi": statusLabel(l.status),
+        "Status Disposisi": l.jenis === "keluar" ? "" : statusLabel(l.status),
         "Link Berkas": l.webViewLink || ""
       };
     });
@@ -660,14 +660,14 @@
     var rows = lettersInMonth(monthStr);
     var stats = {total: rows.length, masuk:0, keluar:0, selesai:0, belum:0};
     rows.forEach(function(l){
-      if(l.jenis === "keluar") stats.keluar++; else stats.masuk++;
-      if(l.status === "selesai") stats.selesai++; else stats.belum++;
+      if(l.jenis === "keluar"){ stats.keluar++; }
+      else { stats.masuk++; if(l.status === "selesai") stats.selesai++; else stats.belum++; }
     });
     return {rows:rows, stats:stats};
   }
 
   function belumDiprosesCount(){
-    return state.letters.filter(function(l){ return l.status === "baru" || l.status === "proses"; }).length;
+    return state.letters.filter(function(l){ return l.jenis !== "keluar" && (l.status === "baru" || l.status === "proses"); }).length;
   }
 
   function openReport(){ state.showReport = true; render(); }
@@ -809,12 +809,18 @@
     ])]);
     var tbody = el("tbody",{}, rows.map(function(l){
       var isIncomplete = !l.no_surat || !l.perihal;
-      var statusSelect = el("select",{style:"font-size:11.5px;padding:4px 6px;width:auto;border-radius:999px;"}, STATUS_OPTIONS.map(function(o){
-        var opt = el("option",{value:o.v}, [o.label]);
-        if(o.v === l.status) opt.selected = true;
-        return opt;
-      }));
-      statusSelect.addEventListener("change", function(e){ quickStatus(l.id, e.target.value); });
+      var statusCell;
+      if(l.jenis === "keluar"){
+        statusCell = el("span",{style:"color:var(--ink-faint);font-size:12px;"}, ["\u2013 (tidak berlaku)"]);
+      } else {
+        var statusSelect = el("select",{style:"font-size:11.5px;padding:4px 6px;width:auto;border-radius:999px;"}, STATUS_OPTIONS.map(function(o){
+          var opt = el("option",{value:o.v}, [o.label]);
+          if(o.v === l.status) opt.selected = true;
+          return opt;
+        }));
+        statusSelect.addEventListener("change", function(e){ quickStatus(l.id, e.target.value); });
+        statusCell = statusSelect;
+      }
 
       return el("tr",{}, [
         el("td",{}, [el("span",{class:"no-surat"}, [l.no_surat || "\u2013"])]),
@@ -824,7 +830,7 @@
           el("div",{class:"sub-cell"}, [l.pihak ? ((l.jenis==="keluar" ? "Kepada: " : "Dari: ") + l.pihak) : (l.name || "")])
         ]),
         el("td",{}, [el("span",{class:"badge "+(l.jenis==="keluar"?"keluar":"masuk")}, [l.jenis==="keluar" ? "Keluar" : "Masuk"])]),
-        el("td",{}, [statusSelect]),
+        el("td",{}, [statusCell]),
         el("td",{}, [el("div",{class:"row-actions"}, [
           el("a",{class:"file-link", href:l.webViewLink, target:"_blank", title:"Buka berkas"}, [icon("external-link")]),
           el("button",{class:"icon-btn", title:"Ubah data", onclick:function(){ openEditForm(l.id); }}, [icon("edit")]),
@@ -847,8 +853,15 @@
     var perihal = el("input",{type:"text", placeholder:"Undangan rapat koordinasi\u2026", value: editing ? editing.perihal : ""});
     var pihak = el("input",{type:"text", placeholder:"Nama instansi / orang", value: editing ? editing.pihak : ""});
     var status = el("select",{}, STATUS_OPTIONS.map(function(o){ return el("option",{value:o.v}, [o.label]); }));
-    status.value = editing ? editing.status : "baru";
+    status.value = editing && editing.status ? editing.status : "baru";
     var fileInput = el("input",{type:"file"});
+
+    var statusField = el("div",{}, [el("label",{}, ["Status disposisi"]), status]);
+    function syncStatusVisibility(){
+      statusField.style.display = jenis.value === "keluar" ? "none" : "";
+    }
+    jenis.addEventListener("change", syncStatusVisibility);
+    syncStatusVisibility();
 
     var fileRow = editing
       ? el("p",{class:"hint"}, ["Berkas yang sudah diunggah tidak bisa diganti di sini. Hapus surat ini lalu tambahkan ulang jika perlu mengganti berkas."])
@@ -863,7 +876,7 @@
         jenis: jenis.value,
         perihal: perihal.value.trim(),
         pihak: pihak.value.trim(),
-        status: status.value
+        status: jenis.value === "keluar" ? "" : status.value
       }, fileInput);
     }}, [state.saving ? "Menyimpan\u2026" : "Simpan"]);
     if(state.saving) saveBtn.disabled = true;
@@ -875,7 +888,7 @@
         el("div",{}, [el("label",{}, ["Nomor surat"]), noSurat]),
         el("div",{}, [el("label",{}, ["Tanggal"]), tanggal]),
         el("div",{}, [el("label",{}, ["Jenis"]), jenis]),
-        el("div",{}, [el("label",{}, ["Status disposisi"]), status]),
+        statusField,
         el("div",{class:"full"}, [el("label",{}, ["Perihal"]), perihal]),
         el("div",{class:"full"}, [el("label",{}, ["Pengirim / penerima"]), pihak]),
         fileRow
@@ -902,7 +915,7 @@
       el("div",{class:"stat-card"}, [el("div",{class:"num"}, [String(s.total)]), el("div",{class:"lbl"}, ["Total surat"])]),
       el("div",{class:"stat-card"}, [el("div",{class:"num"}, [String(s.masuk)]), el("div",{class:"lbl"}, ["Surat masuk"])]),
       el("div",{class:"stat-card"}, [el("div",{class:"num"}, [String(s.keluar)]), el("div",{class:"lbl"}, ["Surat keluar"])]),
-      el("div",{class:"stat-card"}, [el("div",{class:"num"}, [String(s.belum)]), el("div",{class:"lbl"}, ["Belum selesai"])])
+      el("div",{class:"stat-card"}, [el("div",{class:"num"}, [String(s.belum)]), el("div",{class:"lbl"}, ["Masuk belum selesai"])])
     ]);
 
     var tableBody;
@@ -920,7 +933,7 @@
               el("td",{}, [fmtDate(l.tanggal)]),
               el("td",{}, [l.perihal || "\u2013"]),
               el("td",{}, [el("span",{class:"badge "+(l.jenis==="keluar"?"keluar":"masuk")}, [l.jenis==="keluar" ? "Keluar" : "Masuk"])]),
-              el("td",{}, [statusLabel(l.status)])
+              el("td",{}, [l.jenis === "keluar" ? "\u2013" : statusLabel(l.status)])
             ]);
           }))
         ])
