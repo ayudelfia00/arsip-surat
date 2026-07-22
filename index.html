@@ -305,7 +305,10 @@
     clientIdInput: "",
     showReport: false,
     reportMonth: new Date().toISOString().slice(0,7),
-    bannerDismissed: false
+    bannerDismissed: false,
+    disposisiModalId: null,
+    disposisiModalStatus: "",
+    disposisiNoteDraft: ""
   };
 
   function el(tag, attrs, children){
@@ -385,7 +388,8 @@
           jenis: meta.jenis || "masuk",
           perihal: meta.perihal || "",
           pihak: meta.pihak || "",
-          status: meta.status || "baru"
+          status: meta.status || "baru",
+          catatan_disposisi: meta.catatan_disposisi || ""
         };
       });
       state.loadingLetters = false;
@@ -509,7 +513,8 @@
       jenis: fields.jenis,
       perihal: fields.perihal,
       pihak: fields.pihak,
-      status: fields.status
+      status: fields.status,
+      catatan_disposisi: fields.jenis === "keluar" ? "" : (fields.catatan_disposisi || (editing ? editing.catatan_disposisi : "") || "")
     };
 
     if(editing){
@@ -589,17 +594,54 @@
     });
   }
 
-  function quickStatus(id, status){
+  function patchLetterMeta(id, patch){
     var letter = state.letters.find(function(l){ return l.id === id; });
-    if(!letter) return;
-    letter.status = status;
-    render();
-    var metadata = {no_surat:letter.no_surat, tanggal:letter.tanggal, jenis:letter.jenis, perihal:letter.perihal, pihak:letter.pihak, status:status};
-    fetch("https://www.googleapis.com/drive/v3/files/"+id, {
+    if(!letter) return Promise.reject();
+    var metadata = {
+      no_surat: letter.no_surat, tanggal: letter.tanggal, jenis: letter.jenis,
+      perihal: letter.perihal, pihak: letter.pihak,
+      status: patch.status !== undefined ? patch.status : letter.status,
+      catatan_disposisi: patch.catatan_disposisi !== undefined ? patch.catatan_disposisi : letter.catatan_disposisi
+    };
+    return fetch("https://www.googleapis.com/drive/v3/files/"+id, {
       method:"PATCH",
       headers: apiHeaders({"Content-Type":"application/json"}),
       body: JSON.stringify({description: JSON.stringify(metadata)})
-    }).catch(function(){ showToast("error","Gagal memperbarui status."); });
+    }).then(function(){
+      letter.status = metadata.status;
+      letter.catatan_disposisi = metadata.catatan_disposisi;
+      render();
+    });
+  }
+
+  function quickStatus(id, status){
+    if(status === "selesai"){
+      openDisposisiModal(id, status);
+      return;
+    }
+    patchLetterMeta(id, {status: status}).catch(function(){ showToast("error","Gagal memperbarui status."); });
+  }
+
+  function openDisposisiModal(id, pendingStatus){
+    var letter = state.letters.find(function(l){ return l.id === id; });
+    if(!letter) return;
+    state.disposisiModalId = id;
+    state.disposisiModalStatus = pendingStatus || letter.status;
+    state.disposisiNoteDraft = letter.catatan_disposisi || "";
+    render();
+  }
+  function closeDisposisiModal(){
+    state.disposisiModalId = null;
+    render();
+  }
+  function submitDisposisiNote(){
+    var id = state.disposisiModalId;
+    var note = state.disposisiNoteDraft;
+    var status = state.disposisiModalStatus;
+    patchLetterMeta(id, {status: status, catatan_disposisi: note}).then(function(){
+      closeDisposisiModal();
+      showToast("info","Catatan disposisi disimpan.");
+    }).catch(function(){ showToast("error","Gagal menyimpan catatan disposisi."); });
   }
 
   function filteredLetters(){
@@ -641,11 +683,12 @@
         "Perihal": l.perihal,
         "Pengirim/Penerima": l.pihak,
         "Status Disposisi": l.jenis === "keluar" ? "" : statusLabel(l.status),
+        "Catatan Disposisi": l.jenis === "keluar" ? "" : (l.catatan_disposisi || ""),
         "Link Berkas": l.webViewLink || ""
       };
     });
     var ws = XLSX.utils.json_to_sheet(data);
-    ws["!cols"] = [{wch:20},{wch:12},{wch:10},{wch:40},{wch:24},{wch:16},{wch:40}];
+    ws["!cols"] = [{wch:20},{wch:12},{wch:10},{wch:40},{wch:24},{wch:16},{wch:35},{wch:40}];
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Arsip Surat");
     XLSX.writeFile(wb, filename);
@@ -819,7 +862,10 @@
           return opt;
         }));
         statusSelect.addEventListener("change", function(e){ quickStatus(l.id, e.target.value); });
-        statusCell = statusSelect;
+        statusCell = el("div",{}, [
+          statusSelect,
+          l.catatan_disposisi ? el("div",{class:"sub-cell", style:"max-width:180px;", title:l.catatan_disposisi}, [icon("note"), " " + l.catatan_disposisi.slice(0,40) + (l.catatan_disposisi.length>40?"\u2026":"")]) : null
+        ]);
       }
 
       return el("tr",{}, [
@@ -833,6 +879,7 @@
         el("td",{}, [statusCell]),
         el("td",{}, [el("div",{class:"row-actions"}, [
           el("a",{class:"file-link", href:l.webViewLink, target:"_blank", title:"Buka berkas"}, [icon("external-link")]),
+          l.jenis !== "keluar" ? el("button",{class:"icon-btn", title:"Catatan disposisi atasan", onclick:function(){ openDisposisiModal(l.id, l.status); }}, [icon("note")]) : null,
           el("button",{class:"icon-btn", title:"Ubah data", onclick:function(){ openEditForm(l.id); }}, [icon("edit")]),
           el("button",{class:"icon-btn", title:"Hapus", onclick:function(){ deleteLetter(l.id); }}, [icon("trash")])
         ])])
@@ -854,11 +901,16 @@
     var pihak = el("input",{type:"text", placeholder:"Nama instansi / orang", value: editing ? editing.pihak : ""});
     var status = el("select",{}, STATUS_OPTIONS.map(function(o){ return el("option",{value:o.v}, [o.label]); }));
     status.value = editing && editing.status ? editing.status : "baru";
+    var catatan = el("textarea",{rows:2, placeholder:"Hasil/instruksi disposisi atasan (opsional)\u2026"});
+    catatan.value = editing ? (editing.catatan_disposisi || "") : "";
     var fileInput = el("input",{type:"file"});
 
     var statusField = el("div",{}, [el("label",{}, ["Status disposisi"]), status]);
+    var catatanField = el("div",{class:"full"}, [el("label",{}, ["Catatan disposisi atasan"]), catatan]);
     function syncStatusVisibility(){
-      statusField.style.display = jenis.value === "keluar" ? "none" : "";
+      var hide = jenis.value === "keluar";
+      statusField.style.display = hide ? "none" : "";
+      catatanField.style.display = hide ? "none" : "";
     }
     jenis.addEventListener("change", syncStatusVisibility);
     syncStatusVisibility();
@@ -876,7 +928,8 @@
         jenis: jenis.value,
         perihal: perihal.value.trim(),
         pihak: pihak.value.trim(),
-        status: jenis.value === "keluar" ? "" : status.value
+        status: jenis.value === "keluar" ? "" : status.value,
+        catatan_disposisi: jenis.value === "keluar" ? "" : catatan.value.trim()
       }, fileInput);
     }}, [state.saving ? "Menyimpan\u2026" : "Simpan"]);
     if(state.saving) saveBtn.disabled = true;
@@ -891,10 +944,41 @@
         statusField,
         el("div",{class:"full"}, [el("label",{}, ["Perihal"]), perihal]),
         el("div",{class:"full"}, [el("label",{}, ["Pengirim / penerima"]), pihak]),
+        catatanField,
         fileRow
       ]),
       el("div",{class:"modal-actions"}, [
         el("button",{class:"btn", onclick:closeForm}, ["Batal"]),
+        saveBtn
+      ])
+    ]);
+    return el("div",{class:"modal-backdrop"}, [modal]);
+  }
+
+  function renderDisposisiModal(){
+    var letter = state.letters.find(function(l){ return l.id === state.disposisiModalId; });
+    if(!letter) return null;
+    var isCompleting = state.disposisiModalStatus === "selesai";
+    var textarea = el("textarea",{rows:5, placeholder:"Tuliskan instruksi atau hasil disposisi dari atasan, mis. \u201cSetujui, teruskan ke bagian keuangan\u201d\u2026"}, []);
+    textarea.value = state.disposisiNoteDraft;
+    textarea.addEventListener("input", function(e){ state.disposisiNoteDraft = e.target.value; });
+
+    var statusNote = isCompleting
+      ? el("p",{class:"hint"}, ["Status akan diubah menjadi ", el("strong",{},["Selesai"]), " setelah catatan disimpan."])
+      : el("p",{class:"hint"}, ["Mengubah atau menambahkan catatan tanpa mengubah status surat."]);
+
+    var saveBtn = el("button",{class:"btn btn-primary", onclick: submitDisposisiNote}, [isCompleting ? "Simpan \u0026 tandai selesai" : "Simpan catatan"]);
+
+    var modal = el("div",{class:"modal"}, [
+      el("h2",{}, ["Catatan disposisi atasan"]),
+      el("p",{class:"hint", style:"margin-bottom:0.8rem;"}, [el("strong",{},[letter.no_surat || letter.name]), " \u2014 ", letter.perihal || ""]),
+      el("div",{class:"field-row"}, [
+        el("label",{}, ["Hasil / instruksi disposisi"]),
+        textarea
+      ]),
+      statusNote,
+      el("div",{class:"modal-actions"}, [
+        el("button",{class:"btn", onclick:closeDisposisiModal}, ["Batal"]),
         saveBtn
       ])
     ]);
@@ -980,6 +1064,9 @@
 
     if(state.showForm){
       root.appendChild(renderForm());
+    }
+    if(state.disposisiModalId){
+      root.appendChild(renderDisposisiModal());
     }
     if(state.showReport){
       root.appendChild(renderReportModal());
