@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --paper:#ECE5D2;
@@ -232,6 +233,41 @@
   .toast.info{background:var(--plum-bg);color:var(--plum);border:1px solid var(--plum);}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
   .loading-row{padding:2rem;text-align:center;color:var(--ink-faint);font-size:13px;}
+
+  .notify-banner{
+    margin:0 1.75rem 1rem;
+    background:var(--gold-bg);border:1px solid var(--gold);border-radius:7px;
+    padding:10px 14px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--gold);
+  }
+  .notify-banner button{
+    margin-left:auto;border:1px solid var(--gold);background:var(--white);color:var(--gold);
+    font-size:12px;font-weight:600;padding:5px 12px;border-radius:5px;cursor:pointer;
+  }
+  .notify-banner .dismiss{border:none;background:none;color:var(--gold);font-size:16px;cursor:pointer;padding:0 2px;margin-left:6px;}
+
+  .section-title{
+    display:flex;align-items:center;gap:8px;
+    padding:0 1.75rem;margin-bottom:0.7rem;
+  }
+  .section-title h3{font-family:'Fraunces',serif;font-size:15.5px;font-weight:600;margin:0;}
+  .section-title .dot{width:8px;height:8px;border-radius:50%;}
+  .section-title.masuk .dot{background:var(--teal);}
+  .section-title.keluar .dot{background:var(--plum);}
+  .section-title.semua .dot{background:var(--ink);}
+  .section-title .count{font-size:12px;color:var(--ink-faint);}
+
+  .report-modal{max-width:640px;}
+  .report-controls{display:flex;align-items:center;gap:10px;margin-bottom:1.1rem;}
+  .report-controls input[type=month]{width:auto;flex:none;}
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1.2rem;}
+  .stat-card{
+    background:var(--paper);border:1px solid var(--paper-line);border-radius:7px;
+    padding:12px 10px;text-align:center;
+  }
+  .stat-card .num{font-family:'Fraunces',serif;font-size:22px;font-weight:600;}
+  .stat-card .lbl{font-size:11px;color:var(--ink-soft);margin-top:2px;}
+  .report-table-wrap{max-height:280px;overflow-y:auto;border:1px solid var(--paper-line);border-radius:6px;}
+  .report-empty{font-size:13px;color:var(--ink-faint);text-align:center;padding:2rem 0;}
 </style>
 </head>
 <body>
@@ -266,7 +302,10 @@
     formError: "",
     saving: false,
     toast: null,
-    clientIdInput: ""
+    clientIdInput: "",
+    showReport: false,
+    reportMonth: new Date().toISOString().slice(0,7),
+    bannerDismissed: false
   };
 
   function el(tag, attrs, children){
@@ -580,6 +619,60 @@
     });
   }
 
+  function statusLabel(v){
+    var o = STATUS_OPTIONS.find(function(x){ return x.v === v; });
+    return o ? o.label : v;
+  }
+
+  function exportToExcel(rows, filename){
+    if(typeof XLSX === "undefined"){
+      showToast("error","Modul ekspor Excel belum siap. Coba lagi sebentar.");
+      return;
+    }
+    if(rows.length === 0){
+      showToast("error","Tidak ada data untuk diekspor.");
+      return;
+    }
+    var data = rows.map(function(l){
+      return {
+        "No. Surat": l.no_surat,
+        "Tanggal": l.tanggal,
+        "Jenis": l.jenis === "keluar" ? "Keluar" : "Masuk",
+        "Perihal": l.perihal,
+        "Pengirim/Penerima": l.pihak,
+        "Status Disposisi": statusLabel(l.status),
+        "Link Berkas": l.webViewLink || ""
+      };
+    });
+    var ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [{wch:20},{wch:12},{wch:10},{wch:40},{wch:24},{wch:16},{wch:40}];
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Arsip Surat");
+    XLSX.writeFile(wb, filename);
+    showToast("info","Berhasil diekspor ke Excel.");
+  }
+
+  function lettersInMonth(monthStr){
+    return state.letters.filter(function(l){ return l.tanggal && l.tanggal.slice(0,7) === monthStr; });
+  }
+
+  function monthStats(monthStr){
+    var rows = lettersInMonth(monthStr);
+    var stats = {total: rows.length, masuk:0, keluar:0, selesai:0, belum:0};
+    rows.forEach(function(l){
+      if(l.jenis === "keluar") stats.keluar++; else stats.masuk++;
+      if(l.status === "selesai") stats.selesai++; else stats.belum++;
+    });
+    return {rows:rows, stats:stats};
+  }
+
+  function belumDiprosesCount(){
+    return state.letters.filter(function(l){ return l.status === "baru" || l.status === "proses"; }).length;
+  }
+
+  function openReport(){ state.showReport = true; render(); }
+  function closeReport(){ state.showReport = false; render(); }
+
   function statusBadge(status){
     var opt = STATUS_OPTIONS.find(function(o){ return o.v === status; }) || STATUS_OPTIONS[0];
     var cls = status === "selesai" ? "selesai" : (status === "proses" ? "proses" : "baru");
@@ -654,6 +747,8 @@
       jenisChips,
       statusChips,
       el("div",{class:"toolbar-spacer"}),
+      el("button",{class:"btn", onclick: openReport, title:"Laporan bulanan"}, [icon("calendar-stats"), " Laporan"]),
+      el("button",{class:"btn", onclick: function(){ exportToExcel(filteredLetters(), "arsip-surat.xlsx"); }, title:"Ekspor daftar yang tampil ke Excel"}, [icon("file-spreadsheet"), " Ekspor"]),
       el("button",{class:"btn", onclick: loadLetters, title:"Muat ulang daftar dari Drive"}, [icon("refresh"), " Refresh"]),
       el("button",{class:"btn btn-primary", onclick: openAddForm}, [icon("plus"), " Tambah surat"])
     ]);
@@ -665,6 +760,31 @@
     if(parts.length !== 3) return d;
     var months = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
     return parts[2] + " " + months[parseInt(parts[1],10)-1] + " " + parts[0];
+  }
+
+  function renderSectionTitle(){
+    var count = filteredLetters().length;
+    var cls, label;
+    if(state.jenisFilter === "masuk"){ cls="masuk"; label="Buku Agenda Surat Masuk"; }
+    else if(state.jenisFilter === "keluar"){ cls="keluar"; label="Buku Agenda Surat Keluar"; }
+    else { cls="semua"; label="Seluruh Arsip Surat"; }
+    return el("div",{class:"section-title "+cls}, [
+      el("span",{class:"dot"}),
+      el("h3",{}, [label]),
+      el("span",{class:"count"}, ["\u2014 " + count + " surat"])
+    ]);
+  }
+
+  function renderBanner(){
+    if(state.bannerDismissed) return null;
+    var n = belumDiprosesCount();
+    if(n === 0) return null;
+    return el("div",{class:"notify-banner"}, [
+      icon("bell"),
+      el("span",{}, [n + " surat belum selesai diproses (status Baru/Diproses)."]),
+      el("button",{onclick:function(){ state.statusFilter="baru"; render(); }}, ["Lihat"]),
+      el("button",{class:"dismiss", title:"Tutup", onclick:function(){ state.bannerDismissed = true; render(); }}, ["\u00d7"])
+    ]);
   }
 
   function renderTable(){
@@ -701,7 +821,7 @@
         el("td",{}, [fmtDate(l.tanggal)]),
         el("td",{}, [
           el("div",{class:"perihal-cell"}, [l.perihal || (isIncomplete ? el("span",{class:"badge incomplete"}, [icon("scan"), "Perlu dilengkapi"]) : "\u2013")]),
-          el("div",{class:"sub-cell"}, [l.pihak || l.name || ""])
+          el("div",{class:"sub-cell"}, [l.pihak ? ((l.jenis==="keluar" ? "Kepada: " : "Dari: ") + l.pihak) : (l.name || "")])
         ]),
         el("td",{}, [el("span",{class:"badge "+(l.jenis==="keluar"?"keluar":"masuk")}, [l.jenis==="keluar" ? "Keluar" : "Masuk"])]),
         el("td",{}, [statusSelect]),
@@ -768,6 +888,62 @@
     return el("div",{class:"modal-backdrop"}, [modal]);
   }
 
+  function renderReportModal(){
+    var monthInput = el("input",{type:"month", value: state.reportMonth});
+    monthInput.addEventListener("change", function(e){ state.reportMonth = e.target.value; render(); });
+
+    var res = monthStats(state.reportMonth);
+    var s = res.stats;
+    var monthLabelParts = state.reportMonth.split("-");
+    var monthNames = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+    var monthLabel = monthLabelParts.length===2 ? monthNames[parseInt(monthLabelParts[1],10)-1] + " " + monthLabelParts[0] : state.reportMonth;
+
+    var statCards = el("div",{class:"stat-grid"}, [
+      el("div",{class:"stat-card"}, [el("div",{class:"num"}, [String(s.total)]), el("div",{class:"lbl"}, ["Total surat"])]),
+      el("div",{class:"stat-card"}, [el("div",{class:"num"}, [String(s.masuk)]), el("div",{class:"lbl"}, ["Surat masuk"])]),
+      el("div",{class:"stat-card"}, [el("div",{class:"num"}, [String(s.keluar)]), el("div",{class:"lbl"}, ["Surat keluar"])]),
+      el("div",{class:"stat-card"}, [el("div",{class:"num"}, [String(s.belum)]), el("div",{class:"lbl"}, ["Belum selesai"])])
+    ]);
+
+    var tableBody;
+    if(res.rows.length === 0){
+      tableBody = el("div",{class:"report-empty"}, ["Tidak ada surat pada bulan " + monthLabel + "."]);
+    } else {
+      tableBody = el("div",{class:"report-table-wrap"}, [
+        el("table",{class:"ledger"}, [
+          el("thead",{}, [el("tr",{}, [
+            el("th",{}, ["No. surat"]), el("th",{}, ["Tanggal"]), el("th",{}, ["Perihal"]), el("th",{}, ["Jenis"]), el("th",{}, ["Status"])
+          ])]),
+          el("tbody",{}, res.rows.map(function(l){
+            return el("tr",{}, [
+              el("td",{}, [el("span",{class:"no-surat"}, [l.no_surat || "\u2013"])]),
+              el("td",{}, [fmtDate(l.tanggal)]),
+              el("td",{}, [l.perihal || "\u2013"]),
+              el("td",{}, [el("span",{class:"badge "+(l.jenis==="keluar"?"keluar":"masuk")}, [l.jenis==="keluar" ? "Keluar" : "Masuk"])]),
+              el("td",{}, [statusLabel(l.status)])
+            ]);
+          }))
+        ])
+      ]);
+    }
+
+    var modal = el("div",{class:"modal report-modal"}, [
+      el("h2",{}, ["Laporan bulanan"]),
+      el("div",{class:"report-controls"}, [
+        monthInput,
+        el("span",{style:"font-size:12.5px;color:var(--ink-soft);"}, [monthLabel]),
+        el("div",{style:"flex:1"}),
+        el("button",{class:"btn", onclick:function(){ exportToExcel(res.rows, "laporan-surat-"+state.reportMonth+".xlsx"); }}, [icon("file-spreadsheet"), " Ekspor bulan ini"])
+      ]),
+      statCards,
+      tableBody,
+      el("div",{class:"modal-actions"}, [
+        el("button",{class:"btn", onclick:closeReport}, ["Tutup"])
+      ])
+    ]);
+    return el("div",{class:"modal-backdrop"}, [modal]);
+  }
+
   function render(){
     var root = document.getElementById("root");
     root.innerHTML = "";
@@ -782,11 +958,18 @@
       return;
     }
 
+    var banner = renderBanner();
+    if(banner) root.appendChild(banner);
+
     root.appendChild(renderToolbar());
+    root.appendChild(renderSectionTitle());
     root.appendChild(el("div",{class:"ledger-wrap"}, [renderTable()]));
 
     if(state.showForm){
       root.appendChild(renderForm());
+    }
+    if(state.showReport){
+      root.appendChild(renderReportModal());
     }
   }
 
